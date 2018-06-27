@@ -1,3 +1,22 @@
+/*
+* Licensed to the Apache Software Foundation (ASF) under one
+* or more contributor license agreements.  See the NOTICE file
+* distributed with this work for additional information
+* regarding copyright ownership.  The ASF licenses this file
+* to you under the Apache License, Version 2.0 (the
+* "License"); you may not use this file except in compliance
+* with the License.  You may obtain a copy of the License at
+*
+*   http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing,
+* software distributed under the License is distributed on an
+* "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+* KIND, either express or implied.  See the License for the
+* specific language governing permissions and limitations
+* under the License.
+*/
+
 import {__DEV__} from '../config';
 import * as zrUtil from 'zrender/src/core/util';
 import env from 'zrender/src/core/env';
@@ -284,8 +303,15 @@ var SeriesModel = ComponentModel.extend({
      * @param {number} dataIndex
      * @param {boolean} [multipleSeries=false]
      * @param {number} [dataType]
+     * @param {boolean} [isRich=false]
+     * @return {Object} formatted tooltip with `html` and `markers`
      */
-    formatTooltip: function (dataIndex, multipleSeries, dataType) {
+    formatTooltip: function (dataIndex, multipleSeries, dataType, isRich) {
+
+        var series = this;
+        var newLine = isRich ? '\n' : '<br/>';
+        var markers = {};
+        var markerId = 0;
 
         function formatArrayValue(value) {
             // ??? TODO refactor these logic.
@@ -311,7 +337,8 @@ var SeriesModel = ComponentModel.extend({
                     return;
                 }
                 var dimType = dimInfo.type;
-                var dimHead = getTooltipMarker({color: color, type: 'subItem'});
+                var markName = series.seriesIndex + 'at' + markerId;
+                var dimHead = getTooltipMarker({color: color, type: 'subItem', isRich: isRich, markerId: markName});
                 var valStr = (vertially
                         ? dimHead + encodeHTML(dimInfo.displayName || '-') + ': '
                         : ''
@@ -324,9 +351,17 @@ var SeriesModel = ComponentModel.extend({
                         : addCommas(val)
                     );
                 valStr && result.push(valStr);
+
+                if (isRich) {
+                    markers[markName] = color;
+                    ++markerId;
+                }
             }
 
-            return (vertially ? '<br/>' : '') + result.join(vertially ? '<br/>' : ', ');
+            return {
+                html: (vertially ? isRich : '') + result.join(vertially ? isRich : ', '),
+                markers: markers
+            };
         }
 
         function formatSingleValue(val) {
@@ -352,7 +387,10 @@ var SeriesModel = ComponentModel.extend({
             ? formatSingleValue(retrieveRawValue(data, dataIndex, tooltipDims[0]))
             : formatSingleValue(isValueArr ? value[0] : value);
 
-        var colorEl = getTooltipMarker(color);
+        var markName = series.seriesIndex + 'at' + markerId;
+        var colorEl = getTooltipMarker({ color: color, type: 'item', isRich: isRich, markerId: markName });
+        markers[markName] = color;
+        ++markerId;
 
         var name = data.getName(dataIndex);
 
@@ -361,16 +399,21 @@ var SeriesModel = ComponentModel.extend({
             seriesName = '';
         }
         seriesName = seriesName
-            ? encodeHTML(seriesName) + (!multipleSeries ? '<br/>' : ': ')
+            ? encodeHTML(seriesName) + (!multipleSeries ? newLine : ': ')
             : '';
 
-        return !multipleSeries
+        var html = !multipleSeries
             ? seriesName + colorEl
                 + (name
                     ? encodeHTML(name) + ': ' + formattedValue
                     : formattedValue
                 )
             : colorEl + seriesName + formattedValue;
+
+        return {
+            html: html,
+            markers: markers
+        };
     },
 
     /**

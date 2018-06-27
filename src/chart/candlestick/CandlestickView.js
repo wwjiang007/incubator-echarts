@@ -1,3 +1,22 @@
+/*
+* Licensed to the Apache Software Foundation (ASF) under one
+* or more contributor license agreements.  See the NOTICE file
+* distributed with this work for additional information
+* regarding copyright ownership.  The ASF licenses this file
+* to you under the Apache License, Version 2.0 (the
+* "License"); you may not use this file except in compliance
+* with the License.  You may obtain a copy of the License at
+*
+*   http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing,
+* software distributed under the License is distributed on an
+* "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+* KIND, either express or implied.  See the License for the
+* specific language governing permissions and limitations
+* under the License.
+*/
+
 import * as zrUtil from 'zrender/src/core/util';
 import ChartView from '../../view/Chart';
 import * as graphic from '../../util/graphic';
@@ -39,13 +58,7 @@ var CandlestickView = ChartView.extend({
         }
     },
 
-    _clear: function () {
-        this.group.removeAll();
-        this._data = null;
-    },
-
     _renderNormal: function (seriesModel) {
-        // var largePoints = data.getLayout('largePoints');
         var data = seriesModel.getData();
         var oldData = this._data;
         var group = this.group;
@@ -104,18 +117,16 @@ var CandlestickView = ChartView.extend({
     },
 
     _renderLarge: function (seriesModel) {
-        var group = this.group;
-
-        group.removeAll();
-
-        createLarge(seriesModel, group);
+        this._clear();
+        createLarge(seriesModel, this.group);
     },
 
     _incrementalRenderNormal: function (params, seriesModel) {
         var data = seriesModel.getData();
         var isSimpleBox = data.getLayout('isSimpleBox');
 
-        for (var dataIndex = params.start; dataIndex < params.end; dataIndex++) {
+        var dataIndex;
+        while ((dataIndex = params.next()) != null) {
             var el;
 
             var itemLayout = data.getItemLayout(dataIndex);
@@ -132,12 +143,12 @@ var CandlestickView = ChartView.extend({
     },
 
     remove: function (ecModel) {
-        var group = this.group;
-        var data = this._data;
+        this._clear();
+    },
+
+    _clear: function () {
+        this.group.removeAll();
         this._data = null;
-        data && data.eachItemGraphicEl(function (el) {
-            el && group.remove(el);
-        });
     },
 
     dispose: zrUtil.noop
@@ -264,15 +275,13 @@ function createLarge(seriesModel, group, incremental) {
 }
 
 function setLargeStyle(sign, el, seriesModel, data) {
-    var normalItemStyleModel = seriesModel.getModel(NORMAL_ITEM_STYLE_PATH);
     var suffix = sign > 0 ? 'P' : 'N';
-
-    var color = data.getVisual('color' + suffix);
-    var borderColor = data.getVisual('borderColor' + suffix) || color;
+    var borderColor = data.getVisual('borderColor' + suffix)
+        || data.getVisual('color' + suffix);
 
     // Color must be excluded.
     // Because symbol provide setColor individually to set fill and stroke
-    var itemStyle = normalItemStyleModel.getItemStyle(SKIP_PROPS);
+    var itemStyle = seriesModel.getModel(NORMAL_ITEM_STYLE_PATH).getItemStyle(SKIP_PROPS);
 
     el.useStyle(itemStyle);
     el.style.fill = null;

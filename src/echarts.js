@@ -1,14 +1,21 @@
-
-/*!
- * ECharts, a free, powerful charting and visualization library.
- *
- * Copyright (c) 2017, Baidu Inc.
- * All rights reserved.
- *
- * LICENSE
- * https://github.com/ecomfe/echarts/blob/master/LICENSE.txt
- */
-
+/*
+* Licensed to the Apache Software Foundation (ASF) under one
+* or more contributor license agreements.  See the NOTICE file
+* distributed with this work for additional information
+* regarding copyright ownership.  The ASF licenses this file
+* to you under the Apache License, Version 2.0 (the
+* "License"); you may not use this file except in compliance
+* with the License.  You may obtain a copy of the License at
+*
+*   http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing,
+* software distributed under the License is distributed on an
+* "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+* KIND, either express or implied.  See the License for the
+* specific language governing permissions and limitations
+* under the License.
+*/
 import {__DEV__} from './config';
 import * as zrender from 'zrender/src/zrender';
 import * as zrUtil from 'zrender/src/core/util';
@@ -36,6 +43,7 @@ import Scheduler from './stream/Scheduler';
 import lightTheme from './theme/light';
 import darkTheme from './theme/dark';
 import './component/dataset';
+import mapDataStorage from './coord/geo/mapDataStorage';
 
 var assert = zrUtil.assert;
 var each = zrUtil.each;
@@ -43,10 +51,10 @@ var isFunction = zrUtil.isFunction;
 var isObject = zrUtil.isObject;
 var parseClassType = ComponentModel.parseClassType;
 
-export var version = '4.0.4';
+export var version = '4.1.0';
 
 export var dependencies = {
-    zrender: '4.0.3'
+    zrender: '4.0.4'
 };
 
 var TEST_FRAME_REMAIN_TIME = 1;
@@ -214,7 +222,7 @@ function ECharts(dom, theme, opts) {
      */
     this._scheduler = new Scheduler(this, api, dataProcessorFuncs, visualFuncs);
 
-    Eventful.call(this);
+    Eventful.call(this, this._ecEventProcessor = makeEventProcessor(this));
 
     /**
      * @type {module:echarts~MessageCenter}
@@ -791,13 +799,16 @@ var updateMethods = {
 
         scheduler.performDataProcessorTasks(ecModel, payload);
 
-        coordSysMgr.update(ecModel, api);
-
         // Current stream render is not supported in data process. So we can update
         // stream modes after data processing, where the filtered data is used to
-        // deteming whether use progressive rendering. And we update stream modes
-        // after coordinate system updated, then full coord info can be fetched.
+        // deteming whether use progressive rendering.
         updateStreamModes(this, ecModel);
+
+        // We update stream modes before coordinate system updated, then the modes info
+        // can be fetched when coord sys updating (consider the barGrid extent fix). But
+        // the drawback is the full coord info can not be fetched. Fortunately this full
+        // coord is not requied in stream mode updater currently.
+        coordSysMgr.update(ecModel, api);
 
         clearColorPalette(ecModel);
         scheduler.performVisualTasks(ecModel, payload);
@@ -1499,9 +1510,10 @@ echartsProto._initEvents = function () {
             var ecModel = this.getModel();
             var el = e.target;
             var params;
+            var isGlobalOut = eveName === 'globalout';
 
             // no e.target when 'globalout'.
-            if (eveName === 'globalout') {
+            if (isGlobalOut) {
                 params = {};
             }
             else if (el && el.dataIndex != null) {
@@ -1514,8 +1526,30 @@ echartsProto._initEvents = function () {
             }
 
             if (params) {
+                var componentType = params.componentType;
+                var componentIndex = params[componentType + 'Index'];
+                var model = componentType && componentIndex != null
+                    && ecModel.getComponent(componentType, componentIndex);
+                var view = model && this[
+                    model.mainType === 'series' ? '_chartsMap' : '_componentsMap'
+                ][model.__viewId];
+
+                if (__DEV__) {
+                    // `event.componentType` and `event[componentTpype + 'Index']` must not
+                    // be missed, otherwise there is no way to distinguish source component.
+                    // See `dataFormat.getDataParams`.
+                    zrUtil.assert(isGlobalOut || (model && view));
+                }
+
                 params.event = e;
                 params.type = eveName;
+
+                var ecEventProcessor = this._ecEventProcessor;
+                ecEventProcessor.targetEl = el;
+                ecEventProcessor.packedEvent = params;
+                ecEventProcessor.model = model;
+                ecEventProcessor.view = view;
+
                 this.trigger(eveName, params);
             }
 
@@ -1657,6 +1691,108 @@ function createExtensionAPI(ecInstance) {
 }
 
 /**
+ * Usage of query:
+ * `chart.on('click', query, handler);`
+ * The `query` can be:
+ * + The component type query string, only `mainType` or `mainType.subType`,
+ *   like: 'xAxis', 'series', 'xAxis.category' or 'series.line'.
+ * + The component query object, like:
+ *   `{seriesIndex: 2}`, `{seriesName: 'xx'}`, `{seriesId: 'some'}`,
+ *   `{xAxisIndex: 2}`, `{xAxisName: 'xx'}`, `{xAxisId: 'some'}`.
+ * + The element query object, like:
+ *   `{targetName: 'some'}` (only available in custom series).
+ *
+ * Caveat: If a prop in the `query` object is `null/undefined`, it is the
+ * same as there is no such prop in the `query` object.
+ */
+function makeEventProcessor(ecIns) {
+    return {
+
+        normalizeQuery: function (query) {
+            var cptQuery = {};
+            var dataQuery = {};
+            var otherQuery = {};
+
+            // `query` is `mainType` or `mainType.subType` of component.
+            if (zrUtil.isString(query)) {
+                var condCptType = parseClassType(query);
+                // `.main` and `.sub` may be ''.
+                cptQuery.mainType = condCptType.main || null;
+                cptQuery.subType = condCptType.sub || null;
+            }
+            // `query` is an object, convert to {mainType, index, name, id}.
+            else {
+                // `xxxIndex`, `xxxName`, `xxxId`, `name`, `dataIndex`, `dataType` is reserved,
+                // can not be used in `compomentModel.filterForExposedEvent`.
+                var suffixes = ['Index', 'Name', 'Id'];
+                var dataKeys = {name: 1, dataIndex: 1, dataType: 1};
+                zrUtil.each(query, function (val, key) {
+                    var reserved;
+                    for (var i = 0; i < suffixes.length; i++) {
+                        var propSuffix = suffixes[i];
+                        var suffixPos = key.lastIndexOf(propSuffix);
+                        if (suffixPos > 0 && suffixPos === key.length - propSuffix.length) {
+                            var mainType = key.slice(0, suffixPos);
+                            // Consider `dataIndex`.
+                            if (mainType !== 'data') {
+                                cptQuery.mainType = mainType;
+                                cptQuery[propSuffix.toLowerCase()] = val;
+                                reserved = true;
+                            }
+                        }
+                    }
+                    if (dataKeys.hasOwnProperty(key)) {
+                        dataQuery[key] = val;
+                        reserved = true;
+                    }
+                    if (!reserved) {
+                        otherQuery[key] = val;
+                    }
+                });
+            }
+
+            return {
+                cptQuery: cptQuery,
+                dataQuery: dataQuery,
+                otherQuery: otherQuery
+            };
+        },
+
+        filter: function (eventType, query, args) {
+            // They should be assigned before each trigger call.
+            var targetEl = this.targetEl;
+            var packedEvent = this.packedEvent;
+            var model = this.model;
+            var view = this.view;
+
+            // For event like 'globalout'.
+            if (!model || !view) {
+                return true;
+            }
+
+            var cptQuery = query.cptQuery;
+            var dataQuery = query.dataQuery;
+
+            return check(cptQuery, model, 'mainType')
+                && check(cptQuery, model, 'subType')
+                && check(cptQuery, model, 'index', 'componentIndex')
+                && check(cptQuery, model, 'name')
+                && check(cptQuery, model, 'id')
+                && check(dataQuery, packedEvent, 'name')
+                && check(dataQuery, packedEvent, 'dataIndex')
+                && check(dataQuery, packedEvent, 'dataType')
+                && (!view.filterForExposedEvent || view.filterForExposedEvent(
+                    eventType, query.otherQuery, targetEl, packedEvent
+                ));
+        }
+    };
+
+    function check(query, host, prop, propOnHost) {
+        return query[prop] == null || host[propOnHost || prop] === query[prop];
+    }
+}
+
+/**
  * @type {Object} key: actionType.
  * @inner
  */
@@ -1709,8 +1845,6 @@ var connectedGroups = {};
 var idBase = new Date() - 0;
 var groupIdBase = new Date() - 0;
 var DOM_ATTRIBUTE_KEY = '_echarts_instance_';
-
-var mapDataStores = {};
 
 function enableConnect(chart) {
     var STATUS_PENDING = 0;
@@ -2105,10 +2239,10 @@ export function setCanvasCreator(creator) {
 
 /**
  * @param {string} mapName
- * @param {Object|string} geoJson
+ * @param {Array.<Object>|Object|string} geoJson
  * @param {Object} [specialAreas]
  *
- * @example
+ * @example GeoJSON
  *     $.get('USA.json', function (geoJson) {
  *         echarts.registerMap('USA', geoJson);
  *         // Or
@@ -2117,20 +2251,20 @@ export function setCanvasCreator(creator) {
  *             specialAreas: {}
  *         })
  *     });
+ *
+ *     $.get('airport.svg', function (svg) {
+ *         echarts.registerMap('airport', {
+ *             svg: svg
+ *         }
+ *     });
+ *
+ *     echarts.registerMap('eu', [
+ *         {svg: eu-topographic.svg},
+ *         {geoJSON: eu.json}
+ *     ])
  */
 export function registerMap(mapName, geoJson, specialAreas) {
-    if (geoJson.geoJson && !geoJson.features) {
-        specialAreas = geoJson.specialAreas;
-        geoJson = geoJson.geoJson;
-    }
-    if (typeof geoJson === 'string') {
-        geoJson = (typeof JSON !== 'undefined' && JSON.parse)
-            ? JSON.parse(geoJson) : (new Function('return (' + geoJson + ');'))();
-    }
-    mapDataStores[mapName] = {
-        geoJson: geoJson,
-        specialAreas: specialAreas
-    };
+    mapDataStorage.registerMap(mapName, geoJson, specialAreas);
 }
 
 /**
@@ -2138,7 +2272,12 @@ export function registerMap(mapName, geoJson, specialAreas) {
  * @return {Object}
  */
 export function getMap(mapName) {
-    return mapDataStores[mapName];
+    // For backward compatibility, only return the first one.
+    var records = mapDataStorage.retrieveMap(mapName);
+    return records && records[0] && {
+        geoJson: records[0].geoJSON,
+        specialAreas: records[0].specialAreas
+    };
 }
 
 registerVisual(PRIORITY_VISUAL_GLOBAL, seriesColor);

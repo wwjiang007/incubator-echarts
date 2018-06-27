@@ -1,3 +1,22 @@
+/*
+* Licensed to the Apache Software Foundation (ASF) under one
+* or more contributor license agreements.  See the NOTICE file
+* distributed with this work for additional information
+* regarding copyright ownership.  The ASF licenses this file
+* to you under the Apache License, Version 2.0 (the
+* "License"); you may not use this file except in compliance
+* with the License.  You may obtain a copy of the License at
+*
+*   http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing,
+* software distributed under the License is distributed on an
+* "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+* KIND, either express or implied.  See the License for the
+* specific language governing permissions and limitations
+* under the License.
+*/
+
 import {each} from 'zrender/src/core/util';
 import Group from 'zrender/src/container/Group';
 import * as componentUtil from '../util/component';
@@ -99,6 +118,7 @@ Chart.prototype = {
 
     /**
      * Render in progressive mode.
+     * @param  {Object} params See taskParams in `stream/task.js`
      * @param  {module:echarts/model/Series} seriesModel
      * @param  {module:echarts/model/Global} ecModel
      * @param  {module:echarts/ExtensionAPI} api
@@ -114,7 +134,7 @@ Chart.prototype = {
      * @param  {Object} payload
      * @return {Object} {update: true}
      */
-    updateTransform: null
+    updateTransform: null,
 
     /**
      * The view contains the given point.
@@ -123,6 +143,15 @@ Chart.prototype = {
      * @return {boolean}
      */
     // containPoint: function () {}
+
+    /**
+     * @param {string} eventType
+     * @param {Object} query
+     * @param {module:zrender/Element} targetEl
+     * @param {Object} packedEvent
+     * @return {boolen} Pass only when return `true`.
+     */
+    filterForExposedEvent: null
 
 };
 

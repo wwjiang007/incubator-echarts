@@ -1,3 +1,22 @@
+/*
+* Licensed to the Apache Software Foundation (ASF) under one
+* or more contributor license agreements.  See the NOTICE file
+* distributed with this work for additional information
+* regarding copyright ownership.  The ASF licenses this file
+* to you under the Apache License, Version 2.0 (the
+* "License"); you may not use this file except in compliance
+* with the License.  You may obtain a copy of the License at
+*
+*   http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing,
+* software distributed under the License is distributed on an
+* "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+* KIND, either express or implied.  See the License for the
+* specific language governing permissions and limitations
+* under the License.
+*/
+
 import * as zrUtil from 'zrender/src/core/util';
 import * as textContain from 'zrender/src/contain/text';
 import * as numberUtil from './number';
@@ -42,14 +61,14 @@ var replaceMap = {
     '<': '&lt;',
     '>': '&gt;',
     '"': '&quot;',
-    '\'': '&#39;',
+    '\'': '&#39;'
 };
 
 export function encodeHTML(source) {
     return source == null
         ? ''
-        : (source + '').replace(replaceReg, function (str, char) {
-            return replaceMap[char];
+        : (source + '').replace(replaceReg, function (str, c) {
+            return replaceMap[c];
         });
 }
 
@@ -116,6 +135,7 @@ export function formatTplSimple(tpl, param, encode) {
  * @param {string} [opt.color]
  * @param {string} [opt.extraCssText]
  * @param {string} [opt.type='item'] 'item' or 'subItem'
+ * @param {boolean} [opt.isRich=false] if renders with rich text
  * @return {string}
  */
 export function getTooltipMarker(opt, extraCssText) {
@@ -123,18 +143,25 @@ export function getTooltipMarker(opt, extraCssText) {
     var color = opt.color;
     var type = opt.type;
     var extraCssText = opt.extraCssText;
+    var isRich = opt.isRich == null ? false : opt.isRich;
 
     if (!color) {
         return '';
     }
 
-    return type === 'subItem'
+    if (isRich) {
+        // Space for rich element marker
+        return '{marker' + opt.markerId + '|}  ';
+    }
+    else {
+        return type === 'subItem'
         ? '<span style="display:inline-block;vertical-align:middle;margin-right:8px;margin-left:3px;'
             + 'border-radius:4px;width:4px;height:4px;background-color:'
             + encodeHTML(color) + ';' + (extraCssText || '') + '"></span>'
         : '<span style="display:inline-block;margin-right:5px;'
             + 'border-radius:10px;width:10px;height:10px;background-color:'
             + encodeHTML(color) + ';' + (extraCssText || '') + '"></span>';
+    }
 }
 
 function pad(str, len) {
